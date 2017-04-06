@@ -88,6 +88,12 @@ instance FromJSON PublicKey where
             Right pk -> return pk
 
 newtype PrivateKey = PrivateKey { unPrivateKey :: PVSS.PrivateKey }
+  deriving (Eq)
+instance Ord PrivateKey where
+    compare a b = compare (toBS a) (toBS b)
+instance Monoid PrivateKey where
+    mempty  = fromBS $ B.pack [0x00]
+    mappend a b = fromBS $ toBS a <> toBS b
 instance PVSSCompatible PrivateKey where
     type PVSSType PrivateKey = PVSS.PrivateKey
     toPVSSType = unPrivateKey
@@ -95,6 +101,8 @@ instance PVSSCompatible PrivateKey where
 instance ByteArrayAccess PrivateKey where
     length = B.length . toBS
     withByteArray pk = B.withByteArray (toBS pk)
+instance ByteArray PrivateKey where
+    allocRet n f = second fromBS <$> (B.allocRet n f)
 instance Prelude.Show PrivateKey where
     show _ = "<private-key>"
 

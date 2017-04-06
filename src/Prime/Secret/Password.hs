@@ -69,7 +69,7 @@ defaultSaltLength :: Int
 defaultSaltLength = 12
 
 -- | protect the given bytes with a password
-protect :: (MonadRandom randomly, ByteArray bytes)
+protect :: (MonadRandom randomly, ByteArrayAccess bytes)
         => Password
         -> bytes
         -> randomly (CryptoFailable (PasswordProtected bytes))
@@ -78,7 +78,7 @@ protect pwd stuff = do
     salt <- getRandomBytes defaultSaltLength
     let pps = fastPBKDF2_SHA512 defaultParameters pwd (salt :: B.Bytes) :: B.ScrubbedBytes
     return $ do
-        r <- B.convert <$> encrypt' pps header stuff
+        r <- encrypt' pps header (B.convert stuff :: B.Bytes)
         return $ PasswordProtected $ salt <> r
 
 -- | recover the given PasswordProtected bytes

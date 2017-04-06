@@ -11,18 +11,81 @@
 module Main (main) where
 
 import Control.Monad (unless)
-import Foundation.Collection
-import Data.ByteString (ByteString)
-import Data.ByteArray.Encoding (Base(..), convertToBase)
+
+import System.Console.Haskeline
+import System.Environment
+import System.Exit
+import System.IO (hPutStrLn, stderr)
+import Data.Monoid ((<>))
+
+import Data.PEM
+import Data.List (find)
+
+import Data.ByteString.Char8 (ByteString, pack)
+import qualified Data.ByteString as B
 import Data.ByteArray (convert)
+import qualified Data.ByteArray.Encoding as B
 
 import Prime.Secret.Keys
 import Prime.Secret.Client
 import Prime.Secret.Cipher
 import Prime.Secret.Password
 
+defaultAppDirectory :: FilePath -> FilePath
+defaultAppDirectory h = h ++ "/.secretprime"
+
+defaultPEMFile :: FilePath -> FilePath
+defaultPEMFile h = defaultAppDirectory h ++ "/key.pem"
+
 main :: IO ()
 main = do
+    home <- maybe "~" id <$> lookupEnv "HOME"
+    args <- getArgs
+    case args of
+        "generate":"-o":file:[] -> mainGenerate file
+        "generate":[] -> mainGenerate (defaultPEMFile home)
+        "make-public":[] -> withSecret (defaultPEMFile home) mainMakePublic
+        _ -> do
+          hPutStrLn stderr "Error: invalid command or options."
+          hPutStrLn stderr ""
+          hPutStrLn stderr "Usage: secretprime-cli generate (-o <path/to/PEM-file>)"
+          hPutStrLn stderr ""
+          hPutStrLn stderr "Commands:"
+          hPutStrLn stderr ""
+          hPutStrLn stderr " * `generate': generate a new secret key with a passphrase."
+          hPutStrLn stderr $ "   * -o path/to/key.pem: path to write the PEM file to (default `" <> (defaultPEMFile home) <> "' )"
+          hPutStrLn stderr ""
+          exitFailure
+
+mainGenerate :: FilePath -> IO ()
+mainGenerate output = do
+    (p1, p2) <- runInputT defaultSettings $ do
+                    p1 <- getPassword (Just '#') "enter your password: "
+                    p2 <- getPassword (Just '#') "enter (again) your password: "
+                    return (p1, p2)
+    unless (p1 == p2) $ error "invalid passwords... they differ"
+    let password = maybe (error "enter a password") (convert . pack) p1
+    pk <- toPrivateKey <$> keyPairGenerate
+    pks <- throwCryptoError <$> protect password pk
+    B.writeFile output $ pemWriteBS $ PEM "PrimeType SecretKey" [] $ convert pks
+
+mainMakePublic :: PrivateKey -> IO ()
+mainMakePublic pk = do
+    print $ (B.convertToBase B.Base16 pk :: ByteString)
+
+withSecret :: FilePath -> (PrivateKey -> IO a) -> IO a
+withSecret fp f = do
+    r <- pemParseBS <$> B.readFile fp
+    case find ((==) "PrimeType SecretKey" . pemName) <$> r of
+        Left err -> error err
+        Right Nothing -> error "the given key is invalid format"
+        Right (Just pem) -> do
+            let pks = convert $ pemContent pem
+            p <- runInputT defaultSettings $ getPassword (Just '#') "enter your password: "
+            let pwd = maybe (error "missing password") (convert . pack) p
+            let pk = throwCryptoError $ recover pwd pks
+            f pk
+{-
     let secret = "my secret" :: ByteString
     let password = convert ("my password" :: ByteString)
     protected_secret <- throwCryptoError <$> protect password secret
@@ -56,3 +119,4 @@ main = do
 
     print msg_plain
     print msg_deciphered
+-}
