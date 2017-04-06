@@ -77,8 +77,9 @@ protect pwd stuff = do
     let header = mempty :: B.ScrubbedBytes
     salt <- getRandomBytes defaultSaltLength
     let pps = fastPBKDF2_SHA512 defaultParameters pwd (salt :: B.Bytes) :: B.ScrubbedBytes
+    rf <- encrypt' pps header (B.convert stuff :: B.Bytes)
     return $ do
-        r <- encrypt' pps header (B.convert stuff :: B.Bytes)
+        r <- rf
         return $ PasswordProtected $ salt <> r
 
 -- | recover the given PasswordProtected bytes
