@@ -13,23 +13,23 @@ module Prime.Secret.Cipher
     , finalize, Auth
     ) where
 
-import Foundation
+import Foundation hiding (drop)
 import Data.ByteArray
-import Prime.Secret.Client (Secret)
+import           Control.Monad (when)
 
 import Crypto.Error
-import           Crypto.MAC.Poly1305 (Auth)
+import           Crypto.MAC.Poly1305 (Auth(..))
 import           Crypto.Cipher.ChaChaPoly1305 (Nonce, State, encrypt, decrypt, finalize)
 import qualified Crypto.Cipher.ChaChaPoly1305 as C
 
 -- | deterministically generate the nonce from the secret
 --
 -- So it is already safely shared.
-mkNonce :: Secret -> CryptoFailable Nonce
+mkNonce :: ByteArrayAccess key => key -> CryptoFailable Nonce
 mkNonce s = C.nonce12 $ view s 0 12
 
 -- | start a cipher state (to encrypt or decrypt only)
-start :: ByteArrayAccess header => Secret -> header -> CryptoFailable State
+start :: (ByteArrayAccess key, ByteArrayAccess header) => key -> header -> CryptoFailable State
 start s header = do
     nonce <- mkNonce s
     C.finalizeAAD . C.appendAAD header <$> C.initialize s nonce
@@ -37,25 +37,29 @@ start s header = do
 -- | encrypt the given stream
 --
 -- This is a convenient function to cipher small elements
-encrypt' :: (ByteArray stream, ByteArrayAccess header)
-         => Secret
+encrypt' :: (ByteArrayAccess key, ByteArray stream, ByteArrayAccess header)
+         => key
          -> header
          -> stream -- ^ to encrypt
-         -> CryptoFailable (Auth, stream) -- ^ encrypted
+         -> CryptoFailable stream -- ^ encrypted
 encrypt' sec header input = do
     st <- start sec header
     let (enc, st') = encrypt input st
-    return (finalize st', enc)
+    return (convert (finalize st') <> enc)
 
 -- | decrypt the given stream
 --
 -- This is a convenient function to decipher small elements
-decrypt' :: (ByteArray stream, ByteArrayAccess header)
-         => Secret
+decrypt' :: (ByteArrayAccess key, ByteArray stream, ByteArrayAccess header)
+         => key
          -> header
          -> stream -- ^ to decrypt
-         -> CryptoFailable (Auth, stream) -- ^ decrypted
-decrypt' sec header input = do
+         -> CryptoFailable stream -- ^ decrypted
+decrypt' sec header auth_input = do
+    let auth  = Auth $ convert $ view auth_input 0 16
+    let input = drop 16 auth_input
     st <- start sec header
-    let (enc, st') = decrypt input st
-    return (finalize st', enc)
+    let (dec, st') = decrypt input st
+    let auth' = finalize st'
+    when (auth /= auth') $ CryptoFailed CryptoError_AuthenticationTagSizeInvalid
+    return dec
