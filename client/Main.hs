@@ -37,14 +37,20 @@ defaultAppDirectory h = h ++ "/.secretprime"
 defaultPEMFile :: FilePath -> FilePath
 defaultPEMFile h = defaultAppDirectory h ++ "/key.pem"
 
+defaultPEMKeySK :: String
+defaultPEMKeySK = "PrimeType SecretKey"
+defaultPEMKeyPK :: String
+defaultPEMKeyPK = "PrimeType PublicKey"
+
 main :: IO ()
 main = do
     home <- maybe "~" id <$> lookupEnv "HOME"
     args <- getArgs
     case args of
+        "test":_ -> makeTest
         "generate":"-o":file:[] -> mainGenerate file
         "generate":[] -> mainGenerate (defaultPEMFile home)
-        "make-public":[] -> withSecret (defaultPEMFile home) mainMakePublic
+        "make-public":[] -> withKeyPair (defaultPEMFile home) mainMakePublic
         _ -> do
           hPutStrLn stderr "Error: invalid command or options."
           hPutStrLn stderr ""
@@ -65,18 +71,21 @@ mainGenerate output = do
                     return (p1, p2)
     unless (p1 == p2) $ error "invalid passwords... they differ"
     let password = maybe (error "enter a password") (convert . pack) p1
-    pk <- toPrivateKey <$> keyPairGenerate
-    pks <- throwCryptoError <$> protect password pk
-    B.writeFile output $ pemWriteBS $ PEM "PrimeType SecretKey" [] $ convert pks
+    kp <- keyPairGenerate
+    pks <- throwCryptoError <$> protect password (toPrivateKey kp)
+    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
+    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
 
-mainMakePublic :: PrivateKey -> IO ()
-mainMakePublic pk = do
-    print $ (B.convertToBase B.Base16 pk :: ByteString)
+mainMakePublic :: KeyPair -> IO ()
+mainMakePublic = print
+
+withKeyPair :: FilePath -> (KeyPair -> IO a) -> IO a
+withKeyPair fp f = withSecret fp $ \sk -> withPublic fp $ \pk -> f (KeyPair sk pk)
 
 withSecret :: FilePath -> (PrivateKey -> IO a) -> IO a
 withSecret fp f = do
     r <- pemParseBS <$> B.readFile fp
-    case find ((==) "PrimeType SecretKey" . pemName) <$> r of
+    case find ((==) defaultPEMKeySK . pemName) <$> r of
         Left err -> error err
         Right Nothing -> error "the given key is invalid format"
         Right (Just pem) -> do
@@ -85,7 +94,16 @@ withSecret fp f = do
             let pwd = maybe (error "missing password") (convert . pack) p
             let pk = throwCryptoError $ recover pwd pks
             f pk
-{-
+
+withPublic :: FilePath -> (PublicKey -> IO a) -> IO a
+withPublic fp f = do
+    r <- pemParseBS <$> B.readFile fp
+    case find ((==) defaultPEMKeyPK . pemName) <$> r of
+        Left err -> error err
+        Right Nothing -> error "the given key is invalid format"
+        Right (Just pem) -> f $ convert $ pemContent pem
+
+makeTest = do
     let secret = "my secret" :: ByteString
     let password = convert ("my password" :: ByteString)
     protected_secret <- throwCryptoError <$> protect password secret
@@ -112,11 +130,10 @@ withSecret fp f = do
     -- 4 cipher a message
     let msg_plain = "This is a ciphered message..." :: ByteString
     let header = mempty :: ByteString
-    msg_ciphered <- throwCryptoErrorIO $ encrypt' s header msg_plain
+    msg_ciphered <- throwCryptoError <$> encrypt' s header msg_plain
 
     -- 5 decipher message
     msg_deciphered <- throwCryptoErrorIO $ decrypt' s header msg_ciphered
 
     print msg_plain
     print msg_deciphered
--}
