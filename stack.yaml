@@ -1,6 +1,6 @@
 resolver: lts-8.6
 packages:
 - '.'
-extra-deps: [foundation-0.0.4, pvss-0.1]
+extra-deps: [foundation-0.0.4, pvss-0.1, cryptonite-0.22]
 flags: {}
 extra-package-dbs: []
