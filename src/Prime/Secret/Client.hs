@@ -7,16 +7,12 @@
 --
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Prime.Secret.Client
-    ( -- * Key Management
-      PublicKey
-    , PrivateKey
-    , KeyPair(..)
-    , keyPairGenerate
-
+    (
       -- * Secret
-    , Share(..), ExtraGen, Commitment, EncryptedShare
+     Share(..), ExtraGen, Commitment, EncryptedShare
     , Secret
       -- ** generate secret
     , generateSecret
@@ -36,7 +32,6 @@ module Prime.Secret.Client
 import Foundation
 import Foundation.Collection (zip3)
 import Crypto.PVSS ( Threshold
-                   , PublicKey, KeyPair(..), PrivateKey
                    , escrow
                    , Commitment
                    , EncryptedShare
@@ -47,23 +42,39 @@ import Crypto.PVSS ( Threshold
                    , verifyEncryptedShare
                    , shareDecrypt
                    , recover
-                   , keyPairGenerate
                    )
+import Data.Aeson (ToJSON(..), FromJSON(..), object, (.:), (.=), withObject)
 import Crypto.Random (MonadRandom)
 import Crypto.Error (CryptoFailable(..), throwCryptoError, throwCryptoErrorIO)
 import Data.ByteArray (ScrubbedBytes, convert, ByteArrayAccess)
 
+import Prime.Secret.Keys
+
 -- | this can be used
 newtype Secret = Secret ScrubbedBytes
-  deriving (Eq, Show, Typeable, ByteArrayAccess)
+  deriving (Eq, Typeable, ByteArrayAccess)
 
 -- | User's Share
 data Share = Share
     { shareExtraGen   :: ExtraGen
     , shareCommitment :: Commitment
     , shareEncrypted  :: EncryptedShare
+    , sharePublicKey  :: PublicKey
     }
   deriving (Eq, Show, Typeable)
+instance ToJSON Share where
+    toJSON o = object
+      [ "extra_gen"  .= binToBase16 (shareExtraGen o)
+      , "commitment" .= binToBase16 (shareCommitment o)
+      , "encrypted"  .= binToBase16 (shareEncrypted o)
+      , "publickey"  .= sharePublicKey o
+      ]
+instance FromJSON Share where
+    parseJSON = withObject "Share" $ \o -> Share
+        <$> (binFromBase16 <$> o .: "extra_gen")
+        <*> (binFromBase16 <$> o .: "commitment")
+        <*> (binFromBase16 <$> o .: "encrypted")
+        <*> o .: "publickey"
 
 -- | Generate a a Secret (A key to encrypt something) and the list of Shares.o
 --
@@ -75,12 +86,12 @@ data Share = Share
 generateSecret :: MonadRandom randomly
                => Threshold
                -> [PublicKey]
-               -> randomly (Secret, [(PublicKey, Share)])
+               -> randomly (Secret, [Share])
 generateSecret t l = do
-    (eg, sec, _, commitments, shares) <- escrow t l
+    (eg, sec, _, commitments, shares) <- escrow t (toPVSSType <$> l)
     let DhSecret bs = secretToDhSecret sec
     return ( Secret $ convert bs
-           , (\(a,b,c) -> (a, Share eg b c)) <$> zip3 l commitments shares
+           , (\(a,b,c) -> (Share eg b c a)) <$> zip3 l commitments shares
            )
 
 -- | allow anyone to check a given Share is valid for the given commitments
@@ -88,15 +99,16 @@ generateSecret t l = do
 -- This will be useful for the Server to verify the received Share to store
 -- is valid. And avoid storing/accepting corrupted data.
 --
-verifyShare :: [Commitment] -> PublicKey -> Share -> Bool
-verifyShare commitments pk (Share eg _ es) =
-  verifyEncryptedShare eg commitments (es, pk)
+verifyShare :: [Commitment] -> Share -> Bool
+verifyShare commitments (Share eg _ es pk) =
+  verifyEncryptedShare eg commitments (es, toPVSSType pk)
 
+-- | recover the Decrypted Share
 recoverShare :: MonadRandom randomly
              => KeyPair
              -> Share
              -> randomly DecryptedShare
-recoverShare kp (Share _ _ es) = shareDecrypt kp es
+recoverShare kp (Share _ _ es _) = shareDecrypt (toPVSSType kp) es
 
 recoverSecret :: [DecryptedShare] -> Secret
 recoverSecret = Secret . (\(DhSecret dh) -> convert dh) . secretToDhSecret . recover
