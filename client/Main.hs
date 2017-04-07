@@ -10,7 +10,7 @@
 
 module Main (main) where
 
-import Control.Monad (unless)
+import Control.Monad (unless, foldM, forM_)
 
 import System.Console.Haskeline
 import System.Environment
@@ -48,23 +48,30 @@ main = do
     args <- getArgs
     case args of
         "test":_ -> makeTest
-        "generate":"-o":file:[] -> mainGenerate file
-        "generate":[] -> mainGenerate (defaultPEMFile home)
-        "make-public":[] -> withKeyPair (defaultPEMFile home) mainMakePublic
+        "generate":"-o":file:[]        -> mainGenerate file Nothing
+        "generate":"-o":file:"-p":p:[] -> mainGenerate file (Just $ convert $ pack p)
+        "generate":[]                  -> mainGenerate (defaultPEMFile home) Nothing
+        "pvss":t:xs | null xs -> error "pvss command is expecting PublicKey PEM file"
+                    | otherwise -> doPVSS (read t) xs
         _ -> do
           hPutStrLn stderr "Error: invalid command or options."
           hPutStrLn stderr ""
-          hPutStrLn stderr "Usage: secretprime-cli generate (-o <path/to/PEM-file>)"
+          hPutStrLn stderr "Usage: secretprime-cli generate [-o <path/to/PEM-file> [-p <password>]]"
+          hPutStrLn stderr "       secretprime-cli pvss <threshold> path/to/PublicKeyPem..."
           hPutStrLn stderr ""
           hPutStrLn stderr "Commands:"
           hPutStrLn stderr ""
           hPutStrLn stderr " * `generate': generate a new secret key with a passphrase."
           hPutStrLn stderr $ "   * -o path/to/key.pem: path to write the PEM file to (default `" <> (defaultPEMFile home) <> "' )"
+          hPutStrLn stderr   "   * -p password: by default will ask on the prompt"
+          hPutStrLn stderr ""
+          hPutStrLn stderr " * `pvss:  new secret key with a passphrase."
+          hPutStrLn stderr $ "   * -o path/to/key.pem: path to write the PEM file to (default `" <> (defaultPEMFile home) <> "' )"
           hPutStrLn stderr ""
           exitFailure
 
-mainGenerate :: FilePath -> IO ()
-mainGenerate output = do
+mainGenerate :: FilePath -> Maybe Password -> IO ()
+mainGenerate output Nothing = do
     (p1, p2) <- runInputT defaultSettings $ do
                     p1 <- getPassword (Just '#') "enter your password: "
                     p2 <- getPassword (Just '#') "enter (again) your password: "
@@ -75,9 +82,28 @@ mainGenerate output = do
     pks <- throwCryptoError <$> protect password (toPrivateKey kp)
     B.appendFile output $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
     B.appendFile output $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
+mainGenerate output (Just password) = do
+    kp <- keyPairGenerate
+    pks <- throwCryptoError <$> protect password (toPrivateKey kp)
+    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
+    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
 
-mainMakePublic :: KeyPair -> IO ()
-mainMakePublic = print
+doPVSS :: Integer -> [FilePath] -> IO ()
+doPVSS t l = do
+    -- 1. collect the public keys from the PEMs
+    pks <- foldM (\acc fp -> withPublic fp (return . flip (:) acc)) [] l
+
+    -- 2 generate shared secret
+    (s, commitments, ps) <- generateSecret t pks
+
+    unless (fromIntegral t == length commitments) $
+        error "there should be as many commitments as threshold"
+    -- 3 verify the shares
+    unless (and $ verifyShare commitments <$> ps) $
+        error "one of the share is not valid"
+
+    -- 4. TODO output the shares
+    forM_ ps print
 
 withKeyPair :: FilePath -> (KeyPair -> IO a) -> IO a
 withKeyPair fp f = withSecret fp $ \sk -> withPublic fp $ \pk -> f (KeyPair sk pk)
@@ -120,10 +146,9 @@ makeTest = do
     let users = [user1, user2]
 
     -- 2 generate shared secret
-    (s, ps) <- generateSecret 1 $ toPublicKey <$> users
+    (s, commitments, ps) <- generateSecret 1 $ toPublicKey <$> users
 
     -- 3 verify the shares
-    let commitments = shareCommitment <$> ps
     unless (and $ verifyShare commitments <$> ps) $
         error "one of the share is not valid"
 
