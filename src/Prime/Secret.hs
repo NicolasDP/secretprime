@@ -1,0 +1,55 @@
+-- |
+-- Module      : Prime.Secret
+-- License     : BSD-style
+-- Maintainer  : Nicolas Di Prima <nicolas@primetype.co.uk>
+-- Stability   : stable
+-- Portability : Good
+--
+module Prime.Secret
+    ( -- * Keys
+      PublicKey
+    , PrivateKey
+    , KeyPair(..)
+    , keyPairGenerate
+    , -- * Passwords
+      Password
+    , PasswordProtected
+    , protect
+    , recover
+    , -- * Secret
+      Share(..), ExtraGen, Commitment, EncryptedShare, DecryptedShare
+    , Secret
+      -- ** generate secret
+    , generateSecret
+      -- ** verify share
+    , verifyShare
+      -- ** recove share
+    , recoverShare
+      -- ** recove Secret
+    , recoverSecret
+    , -- * Ciphering
+      -- ** stream
+      State
+    , start
+    , finalize, Auth
+    , encrypt
+    , decrypt
+      -- ** helpers
+    , encrypt'
+    , decrypt'
+    , -- * Random
+      MonadRandom(..)
+    , -- * Error
+      CryptoFailable(..)
+    , CryptoError(..)
+    , throwCryptoError
+    , throwCryptoErrorIO
+    ) where
+
+import Prime.Secret.Cipher
+import Prime.Secret.Client
+import Prime.Secret.Keys
+import Prime.Secret.Password
+
+import Crypto.Random
+import Crypto.Error
