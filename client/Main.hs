@@ -26,10 +26,7 @@ import qualified Data.ByteString as B
 import Data.ByteArray (convert)
 import qualified Data.ByteArray.Encoding as B
 
-import Prime.Secret.Keys
-import Prime.Secret.Client
-import Prime.Secret.Cipher
-import Prime.Secret.Password
+import Prime.Secret
 
 defaultAppDirectory :: FilePath -> FilePath
 defaultAppDirectory h = h ++ "/.secretprime"

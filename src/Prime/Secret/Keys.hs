@@ -57,9 +57,14 @@ toBS = toStrict . encode . toPVSSType
 fromBS :: (PVSSCompatible a, Binary (PVSSType a)) => ByteString -> a
 fromBS = fromPVSSType . decode . fromStrict
 
+-- | Generate a Public Key and a Secret for, store them in the key pair
 keyPairGenerate :: MonadRandom randomly => randomly KeyPair
 keyPairGenerate = fromPVSSType <$> PVSS.keyPairGenerate
 
+-- | Public Key, can be safely Shared.
+--
+-- PublicKey are used to generate new secrets and identify a user
+--
 newtype PublicKey = PublicKey { unPublicKey :: PVSS.PublicKey }
   deriving (Eq)
 instance Ord PublicKey where
@@ -87,6 +92,9 @@ instance FromJSON PublicKey where
             Left err -> fail ("Failed To Parse PublicKey: " <> err)
             Right pk -> return pk
 
+-- | PrivateKey, to not share as is.
+--
+-- is not shown
 newtype PrivateKey = PrivateKey { unPrivateKey :: PVSS.PrivateKey }
   deriving (Eq)
 instance Ord PrivateKey where
@@ -106,6 +114,7 @@ instance ByteArray PrivateKey where
 instance Prelude.Show PrivateKey where
     show _ = "<private-key>"
 
+-- | Key Pair
 data KeyPair = KeyPair
     { toPrivateKey :: PrivateKey
     , toPublicKey  :: PublicKey

@@ -12,7 +12,7 @@
 module Prime.Secret.Client
     (
       -- * Secret
-     Share(..), ExtraGen, Commitment, EncryptedShare
+      Share(..), ExtraGen, Commitment, EncryptedShare
     , Secret
       -- ** generate secret
     , generateSecret
@@ -31,9 +31,9 @@ module Prime.Secret.Client
 
 import Foundation
 import Foundation.Collection (zip)
+import qualified Crypto.PVSS as PVSS
 import Crypto.PVSS ( Threshold
                    , escrow
-                   , Commitment
                    , EncryptedShare
                    , DecryptedShare
                    , secretToDhSecret
@@ -73,6 +73,18 @@ instance FromJSON Share where
         <*> (binFromBase16 <$> o .: "encrypted")
         <*> o .: "publickey"
 
+-- | Commitment
+newtype Commitment = Commitment { unCommitment :: PVSS.Commitment }
+    deriving (Eq, Typeable)
+instance PVSSCompatible Commitment where
+    type PVSSType Commitment = PVSS.Commitment
+    toPVSSType = unCommitment
+    fromPVSSType = Commitment
+instance ToJSON Commitment where
+    toJSON = toJSON . binToBase16 . toPVSSType
+instance FromJSON Commitment where
+    parseJSON a = fromPVSSType . binFromBase16 <$> parseJSON a
+
 -- | Generate a a Secret (A key to encrypt something) and the list of Shares.o
 --
 -- The Shares a ordered the same way the public key came in
@@ -88,7 +100,7 @@ generateSecret t l = do
     (eg, sec, _, commitments, shares) <- escrow t (toPVSSType <$> l)
     let DhSecret bs = secretToDhSecret sec
     return ( Secret $ convert bs
-           , commitments
+           , fromPVSSType <$> commitments
            , (\(a,b) -> (Share eg b a)) <$> zip l shares
            )
 
@@ -99,7 +111,7 @@ generateSecret t l = do
 --
 verifyShare :: [Commitment] -> Share -> Bool
 verifyShare commitments (Share eg es pk) =
-  verifyEncryptedShare eg commitments (es, toPVSSType pk)
+  verifyEncryptedShare eg (toPVSSType <$> commitments) (es, toPVSSType pk)
 
 -- | recover the Decrypted Share
 recoverShare :: MonadRandom randomly

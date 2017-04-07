@@ -8,6 +8,7 @@
 module Prime.Secret.Cipher
     ( State
     , start
+    , mkNonce, Nonce
     , encrypt, encrypt'
     , decrypt, decrypt'
     , finalize, Auth
@@ -23,9 +24,7 @@ import           Crypto.MAC.Poly1305 (Auth(..))
 import           Crypto.Cipher.ChaChaPoly1305 (Nonce, State, encrypt, decrypt, finalize)
 import qualified Crypto.Cipher.ChaChaPoly1305 as C
 
--- | deterministically generate the nonce from the secret
---
--- So it is already safely shared.
+-- | Randomly Generate a Nonce
 mkNonce :: MonadRandom randomly => randomly (CryptoFailable Nonce)
 mkNonce = C.nonce12 <$> gen
  where
@@ -47,6 +46,10 @@ start s nonce header = do
 -- | encrypt the given stream
 --
 -- This is a convenient function to cipher small elements
+--
+-- the result is serialized as follow:
+-- `auth <> nonce <> ciphered-data`
+--
 encrypt' :: (MonadRandom randomly, ByteArrayAccess key, ByteArray stream, ByteArrayAccess header)
          => key
          -> header
@@ -61,8 +64,6 @@ encrypt' sec header input = do
         return (convert (finalize st') <> convert nonce <> enc)
 
 -- | decrypt the given stream
---
--- This is a convenient function to decipher small elements
 decrypt' :: (ByteArrayAccess key, ByteArray stream, ByteArrayAccess header)
          => key
          -> header
