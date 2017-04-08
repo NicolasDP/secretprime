@@ -29,6 +29,8 @@ module Prime.Secret.Password
     , PasswordProtected
     , protect
     , recover
+    , Salt
+    , mkSalt
     ) where
 
 import qualified Prelude
@@ -36,11 +38,16 @@ import qualified Text.Read as Prelude
 
 import           Foundation
 import           Data.Aeson (ToJSON(..), FromJSON(..))
+import           Data.ByteString (ByteString)
 import           Data.ByteArray (ByteArray, ByteArrayAccess)
 import qualified Data.ByteArray as B
 import qualified Data.ByteArray.Encoding as B
 import           Crypto.Random (MonadRandom(..))
 import           Crypto.Error
+
+import           Database.Persist.Class (PersistField(..))
+import           Database.Persist.Types (PersistValue(..))
+import           Database.Persist.Sql   (PersistFieldSql(..), SqlType(..))
 
 import Crypto.KDF.PBKDF2 (fastPBKDF2_SHA512, Parameters(..))
 import Data.ByteString.Char8 (pack, unpack)
@@ -59,40 +66,54 @@ newtype Password = Password B.ScrubbedBytes
 instance Prelude.Read Password where
     readPrec = Password . B.convert . pack <$> Prelude.readPrec
 
+newtype Salt = Salt B.Bytes
+    deriving (Eq, Ord, Typeable, Monoid, ByteArray, ByteArrayAccess)
+instance ToJSON Salt where
+    toJSON = toJSON . unpack . B.convertToBase B.Base16
+instance FromJSON Salt where
+    parseJSON a = do
+        r <- B.convertFromBase B.Base16 . pack <$> parseJSON a
+        case r of
+            Left err -> fail ("Failed To Parse Salt: " <> err)
+            Right s  -> return s
+
+defaultSaltLength :: Int
+defaultSaltLength = 12
+
+mkSalt :: MonadRandom randomly => randomly Salt
+mkSalt = getRandomBytes defaultSaltLength
+
 defaultParameters :: Parameters
 defaultParameters = Parameters
     { iterCounts    = 4000
     , outputLength  = 32
     }
 
-defaultSaltLength :: Int
-defaultSaltLength = 12
-
 -- | protect the given bytes with a password
 protect :: (MonadRandom randomly, ByteArrayAccess bytes)
         => Password
         -> bytes
-        -> randomly (CryptoFailable (PasswordProtected bytes))
+        -> randomly (CryptoFailable (PasswordProtected a))
 protect pwd stuff = do
     let header = mempty :: B.ScrubbedBytes
-    salt <- getRandomBytes defaultSaltLength
-    let pps = fastPBKDF2_SHA512 defaultParameters pwd (salt :: B.Bytes) :: B.ScrubbedBytes
+    Salt salt <- mkSalt
+    let pps = fastPBKDF2_SHA512 defaultParameters pwd salt :: B.ScrubbedBytes
     rf <- encrypt' pps header (B.convert stuff :: B.Bytes)
     return $ do
-        r <- rf
+        Ciphered r <- rf
         return $ PasswordProtected $ salt <> r
 
 -- | recover the given PasswordProtected bytes
 recover :: ByteArray bytes
         => Password
-        -> PasswordProtected bytes
+        -> PasswordProtected a
         -> CryptoFailable bytes
 recover pwd (PasswordProtected salt_stuff) = do
     let header = mempty :: B.ScrubbedBytes
     let salt = B.view salt_stuff 0 defaultSaltLength
-    let stuff = B.drop (defaultSaltLength) salt_stuff
+    let stuff = Ciphered $ B.drop (defaultSaltLength) salt_stuff
     let pps = fastPBKDF2_SHA512 defaultParameters pwd salt :: B.ScrubbedBytes
-    B.convert <$> decrypt' pps header stuff
+    decrypt' pps header stuff
 
 newtype PasswordProtected a = PasswordProtected B.Bytes
   deriving (Eq, Ord, Typeable, Monoid, ByteArray, ByteArrayAccess)
@@ -106,3 +127,11 @@ instance FromJSON (PasswordProtected a) where
         case r of
             Left err -> fail ("Failed To Parse (PasswordProtected a): " <> err)
             Right pk -> return pk
+instance PersistField (PasswordProtected a) where
+    toPersistValue = PersistByteString . B.convert
+    fromPersistValue pv = f <$> fromPersistValue pv
+      where
+        f :: ByteString -> PasswordProtected a
+        f = B.convert
+instance PersistFieldSql (PasswordProtected a) where
+    sqlType _ = SqlBlob
