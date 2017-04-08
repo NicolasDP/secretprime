@@ -11,11 +11,18 @@ module Prime.Secret
     , PrivateKey
     , KeyPair(..)
     , keyPairGenerate
+    , -- * Salt
+      Salt
+    , mkSalt
     , -- * Passwords
       Password
     , PasswordProtected
     , protect
     , recover
+    , -- * Signing
+      Signature
+    , SigningKey
+    , VerifyKey
     , -- * Secret
       Share(..), ExtraGen, Commitment, EncryptedShare, DecryptedShare
     , Secret
@@ -35,6 +42,7 @@ module Prime.Secret
     , encrypt
     , decrypt
       -- ** helpers
+    , Ciphered(..)
     , encrypt'
     , decrypt'
     , -- * Random
@@ -50,6 +58,7 @@ import Prime.Secret.Cipher
 import Prime.Secret.Client
 import Prime.Secret.Keys
 import Prime.Secret.Password
+import Prime.Secret.Signing
 
 import Crypto.Random
 import Crypto.Error
