@@ -17,6 +17,8 @@ module Prime.Secret.Keys
       -- helpers
     , binToBase16
     , binFromBase16
+    , binToBase16'
+    , binFromBase16'
     ) where
 
 import qualified Prelude
@@ -29,6 +31,10 @@ import qualified Data.ByteArray.Encoding as B
 import qualified Crypto.PVSS as PVSS
 import           Crypto.Random (MonadRandom)
 
+import           Database.Persist.Class (PersistField(..))
+import           Database.Persist.Types (PersistValue(..))
+import           Database.Persist.Sql   (PersistFieldSql(..), SqlType(..))
+
 import Data.ByteString.Char8 (ByteString, pack, unpack)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 import Data.Binary (encode, decode, Binary)
@@ -39,9 +45,13 @@ class PVSSCompatible a where
     fromPVSSType :: PVSSType a -> a
 
 binToBase16 :: Binary a => a -> LString
-binToBase16 = unpack . B.convertToBase B.Base16 . toStrict . encode
+binToBase16 = unpack . binToBase16'
 binFromBase16 :: Binary a => LString -> a
-binFromBase16 = decode . fromStrict . either (error . show) id . B.convertFromBase B.Base16 . pack
+binFromBase16 = binFromBase16' . pack
+binToBase16' :: Binary a => a -> ByteString
+binToBase16' = B.convertToBase B.Base16 . toStrict . encode
+binFromBase16' :: Binary a => ByteString -> a
+binFromBase16' = decode . fromStrict . either (error . show) id . B.convertFromBase B.Base16
 
 -- | convert one of these binary stuff into a memory compatible element
 --
@@ -91,6 +101,14 @@ instance FromJSON PublicKey where
         case r of
             Left err -> fail ("Failed To Parse PublicKey: " <> err)
             Right pk -> return pk
+instance PersistField PublicKey where
+    toPersistValue = PersistByteString . B.convert
+    fromPersistValue pv = f <$> fromPersistValue pv
+      where
+        f :: ByteString -> PublicKey
+        f = B.convert
+instance PersistFieldSql PublicKey where
+    sqlType _ = SqlBlob
 
 -- | PrivateKey, to not share as is.
 --
