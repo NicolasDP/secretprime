@@ -38,15 +38,20 @@ import Crypto.PVSS ( Threshold
                    , DecryptedShare
                    , secretToDhSecret
                    , DhSecret(..)
-                   , ExtraGen
+                   , ExtraGen, Proof
                    , verifyEncryptedShare
                    , shareDecrypt
                    , recover
                    )
-import Data.Aeson (ToJSON(..), FromJSON(..), object, (.:), (.=), withObject)
+import Data.Aeson (ToJSON(..), FromJSON(..), encode, decode', object, (.:), (.=), withObject)
 import Crypto.Random (MonadRandom)
 import Crypto.Error (CryptoFailable(..), throwCryptoError, throwCryptoErrorIO)
 import Data.ByteArray (ScrubbedBytes, convert, ByteArrayAccess)
+import Data.ByteString.Lazy (toStrict, fromStrict)
+
+import           Database.Persist.Class (PersistField(..))
+import           Database.Persist.Types (PersistValue(..))
+import           Database.Persist.Sql   (PersistFieldSql(..), SqlType(..))
 
 import Prime.Secret.Keys
 
@@ -57,6 +62,7 @@ newtype Secret = Secret ScrubbedBytes
 -- | User's Share
 data Share = Share
     { shareExtraGen   :: ExtraGen
+    , shareProof      :: Proof
     , shareEncrypted  :: EncryptedShare
     , sharePublicKey  :: PublicKey
     }
@@ -64,14 +70,25 @@ data Share = Share
 instance ToJSON Share where
     toJSON o = object
       [ "extra_gen"  .= binToBase16 (shareExtraGen o)
+      , "proof"      .= binToBase16 (shareProof o)
       , "encrypted"  .= binToBase16 (shareEncrypted o)
       , "publickey"  .= sharePublicKey o
       ]
 instance FromJSON Share where
     parseJSON = withObject "Share" $ \o -> Share
         <$> (binFromBase16 <$> o .: "extra_gen")
+        <*> (binFromBase16 <$> o .: "proof")
         <*> (binFromBase16 <$> o .: "encrypted")
         <*> o .: "publickey"
+instance PersistField Share where
+    toPersistValue = PersistByteString . toStrict . encode
+    fromPersistValue pv = do
+        v <- fromPersistValue pv
+        case decode' $ fromStrict v of
+            Nothing -> Left "cannot decode persistent value Share"
+            Just r  -> Right r
+instance PersistFieldSql Share where
+    sqlType _ = SqlBlob
 
 -- | Commitment
 newtype Commitment = Commitment { unCommitment :: PVSS.Commitment }
@@ -84,6 +101,11 @@ instance ToJSON Commitment where
     toJSON = toJSON . binToBase16 . toPVSSType
 instance FromJSON Commitment where
     parseJSON a = fromPVSSType . binFromBase16 <$> parseJSON a
+instance PersistField Commitment where
+    toPersistValue = PersistByteString . binToBase16' . toPVSSType
+    fromPersistValue pv = fromPVSSType . binFromBase16' <$> fromPersistValue pv
+instance PersistFieldSql Commitment where
+    sqlType _ = SqlBlob
 
 -- | Generate a a Secret (A key to encrypt something) and the list of Shares.o
 --
@@ -97,11 +119,11 @@ generateSecret :: MonadRandom randomly
                -> [PublicKey]
                -> randomly (Secret, [Commitment], [Share])
 generateSecret t l = do
-    (eg, sec, _, commitments, shares) <- escrow t (toPVSSType <$> l)
+    (eg, sec, p, commitments, shares) <- escrow t (toPVSSType <$> l)
     let DhSecret bs = secretToDhSecret sec
     return ( Secret $ convert bs
            , fromPVSSType <$> commitments
-           , (\(a,b) -> (Share eg b a)) <$> zip l shares
+           , (\(a,b) -> (Share eg p b a)) <$> zip l shares
            )
 
 -- | allow anyone to check a given Share is valid for the given commitments
@@ -110,15 +132,16 @@ generateSecret t l = do
 -- is valid. And avoid storing/accepting corrupted data.
 --
 verifyShare :: [Commitment] -> Share -> Bool
-verifyShare commitments (Share eg es pk) =
+verifyShare commitments (Share eg _ es pk) =
   verifyEncryptedShare eg (toPVSSType <$> commitments) (es, toPVSSType pk)
 
 -- | recover the Decrypted Share
+--
 recoverShare :: MonadRandom randomly
              => KeyPair
              -> Share
              -> randomly DecryptedShare
-recoverShare kp (Share _ es _) = shareDecrypt (toPVSSType kp) es
+recoverShare kp (Share _ _ es _) = shareDecrypt (toPVSSType kp) es
 
 recoverSecret :: [DecryptedShare] -> Secret
 recoverSecret = Secret . (\(DhSecret dh) -> convert dh) . secretToDhSecret . recover
