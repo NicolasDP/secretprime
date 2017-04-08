@@ -133,6 +133,8 @@ makeTest = do
     print protected_secret
     let retrieved_secret = throwCryptoError $ recover password protected_secret
     print retrieved_secret
+    unless (secret == retrieved_secret) $
+        error "unable to retrive the secret"
 
     putStrLn "let's generate a secret..."
 
@@ -156,6 +158,8 @@ makeTest = do
 
     -- 5 decipher message
     msg_deciphered <- throwCryptoErrorIO $ decrypt' s header msg_ciphered
+    unless (msg_plain == msg_deciphered) $
+        error "ciphered message not longer the same..."
 
     print msg_plain
     print msg_deciphered
