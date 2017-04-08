@@ -13,7 +13,6 @@ module Prime.Secret.Client
     (
       -- * Secret
       Share(..), ExtraGen, Commitment, EncryptedShare
-    , Secret
       -- ** generate secret
     , generateSecret
       -- ** verify share
@@ -46,7 +45,7 @@ import Crypto.PVSS ( Threshold
 import Data.Aeson (ToJSON(..), FromJSON(..), encode, decode', object, (.:), (.=), withObject)
 import Crypto.Random (MonadRandom)
 import Crypto.Error (CryptoFailable(..), throwCryptoError, throwCryptoErrorIO)
-import Data.ByteArray (ScrubbedBytes, convert, ByteArrayAccess)
+import Data.ByteArray (convert)
 import Data.ByteString.Lazy (toStrict, fromStrict)
 
 import           Database.Persist.Class (PersistField(..))
@@ -54,10 +53,7 @@ import           Database.Persist.Types (PersistValue(..))
 import           Database.Persist.Sql   (PersistFieldSql(..), SqlType(..))
 
 import Prime.Secret.Keys
-
--- | this can be used
-newtype Secret = Secret ScrubbedBytes
-  deriving (Eq, Typeable, ByteArrayAccess)
+import Prime.Secret.Cipher (EncryptionKey, encryptionKey)
 
 -- | User's Share
 data Share = Share
@@ -117,11 +113,11 @@ instance PersistFieldSql Commitment where
 generateSecret :: MonadRandom randomly
                => Threshold
                -> [PublicKey]
-               -> randomly (Secret, [Commitment], [Share])
+               -> randomly (EncryptionKey, [Commitment], [Share])
 generateSecret t l = do
     (eg, sec, p, commitments, shares) <- escrow t (toPVSSType <$> l)
     let DhSecret bs = secretToDhSecret sec
-    return ( Secret $ convert bs
+    return ( throwCryptoError $ encryptionKey $ convert bs
            , fromPVSSType <$> commitments
            , (\(a,b) -> (Share eg p b a)) <$> zip l shares
            )
@@ -143,5 +139,5 @@ recoverShare :: MonadRandom randomly
              -> randomly DecryptedShare
 recoverShare kp (Share _ _ es _) = shareDecrypt (toPVSSType kp) es
 
-recoverSecret :: [DecryptedShare] -> Secret
-recoverSecret = Secret . (\(DhSecret dh) -> convert dh) . secretToDhSecret . recover
+recoverSecret :: [DecryptedShare] -> CryptoFailable EncryptionKey
+recoverSecret = encryptionKey . (\(DhSecret dh) -> convert dh) . secretToDhSecret . recover

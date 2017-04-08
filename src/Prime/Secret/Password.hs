@@ -97,11 +97,14 @@ protect :: (MonadRandom randomly, ByteArrayAccess bytes)
 protect pwd stuff = do
     let header = mempty :: B.ScrubbedBytes
     Salt salt <- mkSalt
-    let pps = fastPBKDF2_SHA512 defaultParameters pwd salt :: B.ScrubbedBytes
-    rf <- encrypt' pps header (B.convert stuff :: B.Bytes)
-    return $ do
-        Ciphered r <- rf
-        return $ PasswordProtected $ salt <> r
+
+    case encryptionKey $ fastPBKDF2_SHA512 defaultParameters pwd salt of
+        CryptoFailed err -> return $ CryptoFailed err
+        CryptoPassed pps -> do
+            rf <- encrypt' pps header (B.convert stuff :: B.Bytes)
+            return $ do
+                Ciphered r <- rf
+                return $ PasswordProtected $ salt <> r
 
 -- | recover the given PasswordProtected bytes
 recover :: ByteArray bytes
@@ -112,7 +115,7 @@ recover pwd (PasswordProtected salt_stuff) = do
     let header = mempty :: B.ScrubbedBytes
     let salt = B.view salt_stuff 0 defaultSaltLength
     let stuff = Ciphered $ B.drop (defaultSaltLength) salt_stuff
-    let pps = fastPBKDF2_SHA512 defaultParameters pwd salt :: B.ScrubbedBytes
+    pps <- encryptionKey $ fastPBKDF2_SHA512 defaultParameters pwd salt
     decrypt' pps header stuff
 
 newtype PasswordProtected a = PasswordProtected B.Bytes

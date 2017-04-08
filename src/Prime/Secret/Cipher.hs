@@ -14,6 +14,9 @@ module Prime.Secret.Cipher
     , decrypt, decrypt'
     , finalize, Auth
     , Ciphered(..)
+    , EncryptionKey
+    , encryptionKey
+    , generateEncryptionKey
     ) where
 
 import qualified Prelude
@@ -76,6 +79,17 @@ start s nonce header = do
     s1 <- C.initialize s nonce
     return $ C.finalizeAAD $ C.appendAAD header s1
 
+newtype EncryptionKey = EncryptionKey B.ScrubbedBytes
+  deriving (Eq, Typeable, ByteArrayAccess)
+
+generateEncryptionKey :: MonadRandom randomly => randomly EncryptionKey
+generateEncryptionKey = EncryptionKey <$> getRandomBytes 32
+
+encryptionKey :: B.ScrubbedBytes -> CryptoFailable EncryptionKey
+encryptionKey ba
+    | B.length ba == 32 = CryptoPassed $ EncryptionKey ba
+    | otherwise         = CryptoFailed CryptoError_KeySizeInvalid
+
 -- | encrypt the given stream
 --
 -- This is a convenient function to cipher small elements
@@ -83,8 +97,8 @@ start s nonce header = do
 -- the result is serialized as follow:
 -- `auth <> nonce <> ciphered-data`
 --
-encrypt' :: (MonadRandom randomly, ByteArrayAccess key, ByteArray stream, ByteArrayAccess header)
-         => key
+encrypt' :: (MonadRandom randomly, ByteArray stream, ByteArrayAccess header)
+         => EncryptionKey
          -> header
          -> stream -- ^ to encrypt
          -> randomly (CryptoFailable (Ciphered a)) -- ^ encrypted
@@ -97,8 +111,8 @@ encrypt' sec header input = do
         return $ Ciphered $ B.convert (finalize st') <> B.convert nonce <> B.convert enc
 
 -- | decrypt the given stream
-decrypt' :: (ByteArrayAccess key, ByteArray stream, ByteArrayAccess header)
-         => key
+decrypt' :: (ByteArray stream, ByteArrayAccess header)
+         => EncryptionKey
          -> header
          -> Ciphered a -- ^ to decrypt
          -> CryptoFailable stream -- ^ decrypted

@@ -25,7 +25,6 @@ module Prime.Secret
     , VerifyKey
     , -- * Secret
       Share(..), ExtraGen, Commitment, EncryptedShare, DecryptedShare
-    , Secret
       -- ** generate secret
     , generateSecret
       -- ** verify share
@@ -35,14 +34,18 @@ module Prime.Secret
       -- ** recove Secret
     , recoverSecret
     , -- * Ciphering
-      -- ** stream
+      -- ** Keys
+      EncryptionKey
+    , encryptionKey
+    , generateEncryptionKey
+    ,  -- ** stream
       State
     , start
     , finalize, Auth
     , encrypt
     , decrypt
-      -- ** helpers
-    , Ciphered(..)
+    , -- ** helpers
+      Ciphered(..)
     , encrypt'
     , decrypt'
     , -- * Random
