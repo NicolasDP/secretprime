@@ -106,7 +106,7 @@ mkConfig compl home = do
         , getPEMFile = pemFP
         , getAppDir = appDir
         , getClientEnv = ClientEnv manager $ BaseUrl Http
-            (maybe "sharesafe.primetype.co.uk" id $ lookupOpt "server_address" opts)
+            (maybe "primetype.co.uk" id $ lookupOpt "server_address" opts)
             (maybe 9473 Prelude.read $ lookupOpt "server_port" opts)
             ""
         , getSession = Nothing
