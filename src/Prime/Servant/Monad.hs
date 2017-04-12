@@ -11,18 +11,15 @@ module Prime.Servant.Monad
     ( -- * Serving Monad
       App, runApp
     , Config(..)
-    , makePool
     , authSettings
     ) where
 
 import Foundation
 
-import Data.String.Conversions (cs)
-import Control.Monad.Logger  (runStderrLoggingT)
 import Control.Monad.Except (ExceptT, MonadError)
 import Control.Monad.Reader (MonadIO, MonadReader, ReaderT)
 import Control.Monad.Catch (MonadThrow)
-import Database.Persist.Sqlite (createSqlitePool, ConnectionPool)
+import Database.Persist.Sql (ConnectionPool)
 import Servant (ServantErr)
 import Servant.Server.Experimental.Auth.Cookie
 import Data.Default
@@ -48,7 +45,3 @@ data Config = Config
 
 authSettings :: AuthCookieSettings
 authSettings = def {acsCookieFlags = ["HttpOnly"]}
-
-makePool :: LString -> Int -> IO ConnectionPool
-makePool sqliteFile poolSize =
-    runStderrLoggingT $ createSqlitePool (cs sqliteFile) poolSize

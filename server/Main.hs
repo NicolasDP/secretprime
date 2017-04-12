@@ -5,10 +5,21 @@
 -- Stability   : stable
 -- Portability : Good
 --
+
+{-# LANGUAGE CPP #-}
+
 module Main (main) where
 
-import           Database.Persist.Sqlite  (runSqlPool)
-import           Network.Wai.Handler.Warp (run)
+import           Data.String.Conversions (cs)
+import           Control.Monad.Logger  (runStderrLoggingT)
+import           Database.Persist.Sql (ConnectionPool)
+import qualified Database.Persist.Sqlite as Sqlite
+#if defined(WITH_MySQL)
+import qualified Database.Persist.MySQL  as MySQL
+import           Data.Yaml (decodeFileEither)
+#endif
+import qualified Network.Wai.Handler.Warp as Warp (run)
+import System.Environment (getArgs)
 
 import           Prime.Servant.Api    (app)
 import           Prime.Servant.Models (doMigrations)
@@ -17,12 +28,25 @@ import           Prime.Servant.Session
 
 import Crypto.Random (drgNew)
 
--- | The 'main' function gathers the required environment information and
--- initializes the application.
 main :: IO ()
 main = do
+    args <- getArgs
+    case args of
+        ["sqlite",fp,sz] -> do
+              pool <- makePool fp (read sz)
+              Sqlite.runSqlPool doMigrations pool
+              startServing pool
+#if defined(WITH_MySQL)
+        ["mysql",cfgfile] -> do
+              r <- decodeFileEither cfgfile
+              case r of
+                  Left err -> error $ show err
+                  Right cfg -> MySQL.withMySQLPool (myConnInfo cfg) (myPoolSize cfg) startServing
+#endif
+        _ -> error "Unknown parameters..."
+startServing :: ConnectionPool -> IO ()
+startServing pool = do
     rs <- mkRandomSource drgNew 1000
-    pool <- makePool "./tmp_test/database.sqlit3" 5
     let fksp = FileKSParams
                      { fkspKeySize = 16
                      , fkspMaxKeys = 3
@@ -37,5 +61,9 @@ main = do
                      , getRandomSource       = rs
                      , getKeySetServer       = k
                      }
-    runSqlPool doMigrations pool
-    run 8080 $ app cfg
+    Warp.run 8080 $ app cfg
+
+
+makePool :: String -> Int -> IO ConnectionPool
+makePool sqliteFile poolSize =
+    runStderrLoggingT $ Sqlite.createSqlitePool (cs sqliteFile) poolSize
