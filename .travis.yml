@@ -31,13 +31,23 @@ script:
 - |
   set -ex
   stack --no-terminal build :secretprime-cli --install-ghc
-  cp $(stack exec -- which secretprime-cli) secretprime-cli
   set +ex
+- |
+  cp $(stack exec -- which secretprime-cli) secretprime-cli
+  if [ `uname` = "Darwin" ]
+  then
+    export PRIMETYPE_RELEASE_FILE=secretprime-cli-osx.tar.bz2
+  else
+    export PRIMETYPE_RELEASE_FILE=secretprime-cli-linux.tar.bz2
+  fi
+  tar cjf ${PRIMETYPE_RELEASE_FILE} secretprime-cli
+
 
 deploy:
   provider: releases
   api_key:
     secure: gEKWTCudhKMh2maCT1MjRpljpfcNvzBpnDhL4sUyDCtKSoTrFmgY76k+oBIRXBYugxJrYtx5lOQ04eSThwu2qFy+5YhDPGMzXbaeK5L9ANwAWuHSl0M9/g6YhXt5vLCUhizZ1OI7XifI+NbuVJFVYpIenmF2ScD3rsDD159OvKMD4EjOH4wlBf8QfpefUa1hCpzbgQO+QP/8e5AcRrrAu7HCnvbGfhtOWynssdrcSBhON7PLyIUKyk5qflU2K3WSGqbe2a4r0+p0HfMaP+jA6dJEelYljLo0EJLtIJPaCQHmiuasZK2wFjnOojtACMCH/o/tTNZHVOa9rCcHAbA5krxNkTj7O+vuAM+ST4vlQexk/AzAvEUmapojD8UgHW4x65qJDRYSaeC+7viqQAkIWzGvYv4ISkJwQqzXfMcsD2jCB0gKzo/LsEY0uPXqLypRudSVXSzb0b1UYQlYuZ2rJMG6XKQaLDS4FvEeIXsN3/2XSQ3hqGaNPGKGPfSVJZx4y1/diUzRDLe0QcnmdKc2fEwelKhsEcaqtzDny1v66v2T37z5ScYpK48Ph+ZuGWem+qqNTcmsqjlO2sksdX7dHQmtDIQqEWPUHv0AbD5MNfoUMY3849ond+QFppfzIEkwcLmHKgmE2+ZMfNxUK6XeuEVEBYESKfqan2T/xujx29Y=
-  file: secretprime-cli
+  file: ${PRIMETYPE_RELEASE_FILE}
+  skip_cleanup: true
   on:
     repo: NicolasDP/secretprime
