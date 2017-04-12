@@ -19,6 +19,7 @@ matrix:
     os: osx
 install:
 - export PATH=$HOME/.local/bin:$PATH
+- mkdir -p ~/.local/bin
 - |
   if [ `uname` = "Darwin" ]
   then
