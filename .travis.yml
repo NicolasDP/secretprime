@@ -1,0 +1,38 @@
+language: haskell
+sudo: false
+cache:
+  directories:
+  - "$HOME/.ghc"
+  - "$HOME/.cabal"
+  - "$HOME/.stack"
+matrix:
+  include:
+  - env: BUILD=stack
+    compiler: ghc-8.0
+    addons:
+      apt:
+        packages:
+        - libgmp-dev
+    os: linux
+  - env: BUILD=stack
+    compiler: ghc-8.0
+    os: osx
+install:
+- export PATH=$HOME/.local/bin:$PATH
+- if [ `uname` = "Darwin" ] then travis_retry curl --insecure -L https://www.stackage.org/stack/osx-x86_64
+  | tar xz --strip-components=1 --include '*/stack' -C ~/.local/bin else travis_retry
+  curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1
+  -C ~/.local/bin '*/stack' fi
+script:
+- |
+  set -ex
+  stack build secretprime-cli
+  cp $(stack exec -- which secretprime-cli) secretprime-cli
+
+deploy:
+  provider: releases
+  api_key:
+    secure: gEKWTCudhKMh2maCT1MjRpljpfcNvzBpnDhL4sUyDCtKSoTrFmgY76k+oBIRXBYugxJrYtx5lOQ04eSThwu2qFy+5YhDPGMzXbaeK5L9ANwAWuHSl0M9/g6YhXt5vLCUhizZ1OI7XifI+NbuVJFVYpIenmF2ScD3rsDD159OvKMD4EjOH4wlBf8QfpefUa1hCpzbgQO+QP/8e5AcRrrAu7HCnvbGfhtOWynssdrcSBhON7PLyIUKyk5qflU2K3WSGqbe2a4r0+p0HfMaP+jA6dJEelYljLo0EJLtIJPaCQHmiuasZK2wFjnOojtACMCH/o/tTNZHVOa9rCcHAbA5krxNkTj7O+vuAM+ST4vlQexk/AzAvEUmapojD8UgHW4x65qJDRYSaeC+7viqQAkIWzGvYv4ISkJwQqzXfMcsD2jCB0gKzo/LsEY0uPXqLypRudSVXSzb0b1UYQlYuZ2rJMG6XKQaLDS4FvEeIXsN3/2XSQ3hqGaNPGKGPfSVJZx4y1/diUzRDLe0QcnmdKc2fEwelKhsEcaqtzDny1v66v2T37z5ScYpK48Ph+ZuGWem+qqNTcmsqjlO2sksdX7dHQmtDIQqEWPUHv0AbD5MNfoUMY3849ond+QFppfzIEkwcLmHKgmE2+ZMfNxUK6XeuEVEBYESKfqan2T/xujx29Y=
+  file: secretprime-cli
+  on:
+    repo: NicolasDP/secretprime
