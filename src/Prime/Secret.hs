@@ -23,6 +23,10 @@ module Prime.Secret
       Signature
     , SigningKey
     , VerifyKey
+    , toVerifyKey
+    , sign
+    , verify
+    , signingKeyFromPassword
     , -- * Secret
       Share(..), ExtraGen, Commitment, EncryptedShare, DecryptedShare
       -- ** generate secret

@@ -12,21 +12,29 @@ module Main (main) where
 
 import Control.Monad (unless, foldM, forM_)
 
-import System.Console.Haskeline
 import System.Environment
 import System.Exit
 import System.IO (hPutStrLn, stderr)
 import Data.Monoid ((<>))
+import Control.Monad (forM)
+import Control.Monad.IO.Class
 
-import Data.PEM
 import Data.List (find)
 
-import Data.ByteString.Char8 (ByteString, pack)
+import Data.ByteString.Char8 (ByteString, pack, unpack)
 import qualified Data.ByteString as B
-import Data.ByteArray (convert)
+import Data.ByteArray (convert, Bytes)
 import qualified Data.ByteArray.Encoding as B
+import Database.Persist.Sql (fromSqlKey)
+import Servant.API.ResponseHeaders hiding (addHeader)
+import Data.Int (Int64)
+import Web.Internal.HttpApiData (parseHeader)
 
 import Prime.Secret
+import Servant.Common.Req
+import Servant.Client.Experimental.Auth
+import Prime.Servant.Client hiding (userName, userEmail)
+import Prime.Client.Monad
 
 defaultAppDirectory :: FilePath -> FilePath
 defaultAppDirectory h = h ++ "/.secretprime"
@@ -43,48 +51,189 @@ main :: IO ()
 main = do
     home <- maybe "~" id <$> lookupEnv "HOME"
     args <- getArgs
-    case args of
-        "test":_ -> makeTest
-        "generate":"-o":file:[]        -> mainGenerate file Nothing
-        "generate":"-o":file:"-p":p:[] -> mainGenerate file (Just $ convert $ pack p)
-        "generate":[]                  -> mainGenerate (defaultPEMFile home) Nothing
-        "pvss":t:xs | null xs -> error "pvss command is expecting PublicKey PEM file"
-                    | otherwise -> doPVSS (read t) xs
-        _ -> do
-          hPutStrLn stderr "Error: invalid command or options."
-          hPutStrLn stderr ""
-          hPutStrLn stderr "Usage: secretprime-cli generate [-o <path/to/PEM-file> [-p <password>]]"
-          hPutStrLn stderr "       secretprime-cli pvss <threshold> path/to/PublicKeyPem..."
-          hPutStrLn stderr ""
-          hPutStrLn stderr "Commands:"
-          hPutStrLn stderr ""
-          hPutStrLn stderr " * `generate': generate a new secret key with a passphrase."
-          hPutStrLn stderr $ "   * -o path/to/key.pem: path to write the PEM file to (default `" <> (defaultPEMFile home) <> "' )"
-          hPutStrLn stderr   "   * -p password: by default will ask on the prompt"
-          hPutStrLn stderr ""
-          hPutStrLn stderr " * `pvss:  new secret key with a passphrase."
-          hPutStrLn stderr $ "   * -o path/to/key.pem: path to write the PEM file to (default `" <> (defaultPEMFile home) <> "' )"
-          hPutStrLn stderr ""
-          exitFailure
+    cfg <- mkConfig (CompleteCommands defaultCompletionList) home
+    runPrimeClient cfg cli
 
-mainGenerate :: FilePath -> Maybe Password -> IO ()
-mainGenerate output Nothing = do
-    (p1, p2) <- runInputT defaultSettings $ do
-                    p1 <- getPassword (Just '#') "enter your password: "
-                    p2 <- getPassword (Just '#') "enter (again) your password: "
-                    return (p1, p2)
-    unless (p1 == p2) $ error "invalid passwords... they differ"
-    let password = maybe (error "enter a password") (convert . pack) p1
-    kp <- keyPairGenerate
-    pks <- throwCryptoError <$> protect password (toPrivateKey kp)
-    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
-    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
-mainGenerate output (Just password) = do
-    kp <- keyPairGenerate
-    pks <- throwCryptoError <$> protect password (toPrivateKey kp)
-    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
-    B.appendFile output $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
+defaultCompletionList :: [Completion]
+defaultCompletionList =
+  [ Completion "help" "help (print help message)"    False
+  , Completion "quit" "quit (terminate the program)" False
+  , Completion "enroll" "enroll (enroll user to the server)" False
+  , Completion "login" "login (loggin with the server)" False
+  , Completion "generate" "generate (create a new public key)" False
+  , Completion "pvss-encrypt" "pvss-encrypt (create a new secret share and encrypt a document)" False
+  , Completion "pvss-decrypt" "pvss-decrypt (use a secret share to decrypt a given ciphered file)" False
+  ]
 
+cli :: PrimeClientM ()
+cli = do
+  setCompletionMode $ CompleteCommands defaultCompletionList
+  cmd <- userInput "> "
+  case cmd of
+      Nothing     -> return ()
+      Just "quit" -> return ()
+      Just "enroll" -> enrollNewUser >> cli
+      Just "login"  -> login *> cli
+      Just "generate" -> login *> generate >> cli
+      Just "pvss-encrypt" -> login *> pvssEncrypt >> cli
+      Just "pvss-decrypt" -> login *> pvssDecrypt >> cli
+      Just "help" -> help Nothing >> cli
+      Just _ -> help cmd >> cli
+
+help :: Maybe String -> PrimeClientM ()
+help mcmd = liftIO $ do
+    case mcmd of
+        Just cmd -> putStrLn $ "Error: invalid command: "  <> cmd
+        Nothing -> return ()
+    putStrLn "available commands are:"
+    forM_ defaultCompletionList $ \(Completion c h _) ->
+      putStrLn $ "  * `" <> c <> "' " <> h
+
+enrollNewUser :: PrimeClientM ()
+enrollNewUser = do
+    name <- userName
+    email <- userEmail
+    pwd <- password
+
+    salt <- mkSalt
+    let sk = throwCryptoError $ signingKeyFromPassword pwd salt
+    r <- getRandomBytes 64
+    ppsalt <- throwCryptoError <$> protect pwd salt
+    let uid = UserIdentificationData (toVerifyKey sk) (ppsalt)
+    let uic = UserIdentificationChallenge r (sign sk (toVerifyKey sk) r)
+    let er = EnrollRequest name email uid uic
+
+    runQueryM $ enroll er
+
+    generate
+
+pvssEncrypt :: PrimeClientM ()
+pvssEncrypt = do
+    s <- pvssConfigure
+    setCompletionMode CompleteFiles
+    pvssEncrypt' s
+  where
+    pvssEncrypt' :: EncryptionKey -> PrimeClientM ()
+    pvssEncrypt' s = do
+      say "encrypt file with the secret (or Ctrl-D to stop):"
+      f <- userInput "> "
+      case words <$> f of
+        Nothing -> return ()
+        Just [_] -> say "you must select the file to write the encrypted data to."
+                    >> pvssEncrypt' s
+        Just (x:y:[]) -> do
+            let header = mempty :: ByteString
+            content <- liftIO $ B.readFile x
+            content' <- throwCryptoError <$> encrypt' s header content
+            liftIO $ B.writeFile y $ convert content'
+            say $ "file ciphered to " <> y
+            pvssEncrypt' s
+        Just _ ->  say "too many files..."
+                >> say " select 1 source file to encrypt"
+                >> say " and 1 target file to write the encrypted data to."
+                >> pvssEncrypt' s
+
+pvssDecrypt :: PrimeClientM ()
+pvssDecrypt = do
+    email <- userEmail
+    -- 1. get the right share
+    share <- selectShare
+    -- 2. retrieve the share
+    let myShare = maybe (error "you don't have a share here...") id $
+                    find ((==) email . spUserEmail) $ sdUsers share
+    kp <- userKeyPair
+    ds <- recoverShare kp $ spUserShare myShare
+    let s = throwCryptoError $ recoverSecret [ds]
+    -- 3. decrypt files
+    setCompletionMode CompleteFiles
+    f <- userInput "> "
+    case words <$> f of
+        Nothing -> say "nothing to decrypt ?"
+        Just l -> do
+          forM_ l $ \file -> do
+            let header = mempty :: ByteString
+            content <- convert <$> (liftIO $ B.readFile file)
+            let content' = throwCryptoError $ decrypt' s header content
+            liftIO $ B.writeFile (file <> ".decrypted") content'
+            say $ "file ciphered to " <> file <> ".decrypted"
+  where
+    selectShare :: PrimeClientM ShareDetails
+    selectShare = do
+      auth <- login
+      l <- runQueryM $ getSharesWithMe auth
+      case l of
+          [] -> error "sorry... no shares with you"
+          [x] -> do
+              say "only one share with you"
+              maybe (return ()) say $ dBSecretComment $ sdSecret x
+              return x
+          _ -> do
+              say "may share shared with you. Select one:"
+              let l' = (\(i, s) -> Completion (show i) (show i <> maybe "" id (dBSecretComment $ sdSecret s)) False) <$> zip [0..] l
+              forM_ l' $ \(Completion x d _) -> say $ "("<> x <> ") " <> d
+              r <- read <$> userInput' "select share: "
+              return $ l !! r
+pvssConfigure :: PrimeClientM EncryptionKey
+pvssConfigure = do
+    setCompletionMode $ CompleteCommands
+        [ Completion "add" "add <self|useremail> (user to add to the Secret Sharing)" True
+        , Completion "threshold" "threshold <number> (set the number of minumum participants to unlock the share)" True
+        , Completion "finalize" "finalize (generate the secret and send it to the server)" False
+        ]
+    self <- userKeyPair
+    go [] 0
+  where
+    go :: [(Int64, PublicKey)] -> Integer -> PrimeClientM EncryptionKey
+    go users t = do
+      cmd <- words <$> userInput' "> "
+      case cmd of
+          ["add", "self"] -> do
+              auth <- login
+              email <- userEmail
+              upk <- runQueryM $ lookupUser auth email
+              case upk of
+                  [k] -> go ((upkUserId k, upkKey k):users) t
+                  []  -> say "no public key found" >> go users t
+                  _   -> say "TODO: many keys" >> go users t
+          ["add", user] -> do
+              auth <- login
+              upk <- runQueryM $ lookupUser auth user
+              case upk of
+                  [k] -> go ((upkUserId k, upkKey k):users) t
+                  []  -> say "no public key found" >> go users t
+                  _   -> say "TODO: many keys" >> go users t
+          "add":_ -> say "error: command `add' accepts one parameter"
+                     >> go users t
+          ["threshold", n] -> go users (read n)
+          "threshold":_ -> say "error: command `threshold' accpets one parameter"
+                          >> go users t
+          ["finalize"] -> do
+              comment <- userInput "set a comment to the share: "
+              (s, commitments, ps) <- generateSecret t (snd <$> users)
+              unless (and $ verifyShare commitments <$> ps) $
+                  error "one of the share is not valid..."
+              let uss = (uncurry UserSecretShare) <$> zip (fst <$> users) ps
+              auth <- login
+              runQueryM $ sendShare auth $ NewShare comment commitments uss
+              return s
+          _ -> say "error: unknown command..." >> go users t
+
+say :: MonadIO m => String -> m ()
+say = liftIO . putStrLn
+
+generate :: PrimeClientM ()
+generate = do
+    auth <- login
+    ukp <- userKeyPair
+    pwd <- password
+
+    mcomment <- userInput "description: "
+
+    salt <- mkSalt
+    ppsk <- throwCryptoError <$> protect pwd (toPrivateKey ukp)
+
+    runQueryM $ sendPublicKey auth (PostPublicKey mcomment (toPublicKey ukp) ppsk)
+{-
 doPVSS :: Integer -> [FilePath] -> IO ()
 doPVSS t l = do
     -- 1. collect the public keys from the PEMs
@@ -102,40 +251,7 @@ doPVSS t l = do
     -- 4. TODO output the shares
     forM_ ps print
 
-withKeyPair :: FilePath -> (KeyPair -> IO a) -> IO a
-withKeyPair fp f = withSecret fp $ \sk -> withPublic fp $ \pk -> f (KeyPair sk pk)
-
-withSecret :: FilePath -> (PrivateKey -> IO a) -> IO a
-withSecret fp f = do
-    r <- pemParseBS <$> B.readFile fp
-    case find ((==) defaultPEMKeySK . pemName) <$> r of
-        Left err -> error err
-        Right Nothing -> error "the given key is invalid format"
-        Right (Just pem) -> do
-            let pks = convert $ pemContent pem
-            p <- runInputT defaultSettings $ getPassword (Just '#') "enter your password: "
-            let pwd = maybe (error "missing password") (convert . pack) p
-            let pk = throwCryptoError $ recover pwd pks
-            f pk
-
-withPublic :: FilePath -> (PublicKey -> IO a) -> IO a
-withPublic fp f = do
-    r <- pemParseBS <$> B.readFile fp
-    case find ((==) defaultPEMKeyPK . pemName) <$> r of
-        Left err -> error err
-        Right Nothing -> error "the given key is invalid format"
-        Right (Just pem) -> f $ convert $ pemContent pem
-
 makeTest = do
-    let secret = "my secret" :: ByteString
-    let password = convert ("my password" :: ByteString)
-    protected_secret <- throwCryptoError <$> protect password secret
-    print protected_secret
-    let retrieved_secret = throwCryptoError $ recover password protected_secret
-    print retrieved_secret
-    unless (secret == retrieved_secret) $
-        error "unable to retrive the secret"
-
     putStrLn "let's generate a secret..."
 
     -- 1 generate users
@@ -163,3 +279,4 @@ makeTest = do
 
     print msg_plain
     print msg_deciphered
+-}

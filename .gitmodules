@@ -1,0 +1,3 @@
+[submodule "other/servant-auth-cookie"]
+	path = other/servant-auth-cookie
+	url = git@github.com:nicolasdp/servant-auth-cookie
