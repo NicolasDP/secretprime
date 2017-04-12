@@ -30,7 +30,7 @@ install:
 script:
 - |
   set -ex
-  stack build secretprime-cli --install-ghc
+  stack build :secretprime-cli --install-ghc
   cp $(stack exec -- which secretprime-cli) secretprime-cli
 
 deploy:
