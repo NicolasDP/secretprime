@@ -99,16 +99,22 @@ mkConfig compl home = do
     let appDir = defaultAppDirectory home
     let pemFP = defaultPEMFile home
     return $ Config
-        { getUserEmail = drop 1 . snd <$> find ((==) "user_email" . fst) opts
-        , getUserName = drop 1 . snd <$> find ((==) "user_name" . fst) opts
+        { getUserEmail = lookupOpt "user_email" opts
+        , getUserName = lookupOpt "user_name" opts
         , getPassword = Nothing
         , getKeyPair = Nothing
         , getPEMFile = pemFP
         , getAppDir = appDir
-        , getClientEnv = ClientEnv manager (BaseUrl Http "localhost" 8080 "")
+        , getClientEnv = ClientEnv manager $ BaseUrl Http
+            (maybe "sharesafe.primetype.co.uk" id $ lookupOpt "server_address" opts)
+            (maybe 9473 Prelude.read $ lookupOpt "server_port" opts)
+            ""
         , getSession = Nothing
         , getCompletionMode = compl
         }
+  where
+    lookupOpt :: LString -> [(LString, LString)] -> Maybe LString
+    lookupOpt w opts = drop 1 . snd <$> find ((==) w . fst) opts
 
 setCompletionMode :: CompletionMode -> PrimeClientM ()
 setCompletionMode cm = modify $ \s -> s { getCompletionMode = cm }

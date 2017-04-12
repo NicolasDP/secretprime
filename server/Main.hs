@@ -32,20 +32,20 @@ main :: IO ()
 main = do
     args <- getArgs
     case args of
-        ["sqlite",fp,sz] -> do
+        ["sqlite",fp,sz,port] -> do
               pool <- makePool fp (read sz)
               Sqlite.runSqlPool doMigrations pool
-              startServing pool
+              startServing pool (read port)
 #if defined(WITH_MySQL)
-        ["mysql",cfgfile] -> do
+        ["mysql",cfgfile,port] -> do
               r <- decodeFileEither cfgfile
               case r of
                   Left err -> error $ show err
-                  Right cfg -> MySQL.withMySQLPool (myConnInfo cfg) (myPoolSize cfg) startServing
+                  Right cfg -> MySQL.withMySQLPool (myConnInfo cfg) (myPoolSize cfg) (flip startServing (read port))
 #endif
         _ -> error "Unknown parameters..."
-startServing :: ConnectionPool -> IO ()
-startServing pool = do
+startServing :: ConnectionPool -> Int -> IO ()
+startServing pool port = do
     rs <- mkRandomSource drgNew 1000
     let fksp = FileKSParams
                      { fkspKeySize = 16
@@ -61,7 +61,7 @@ startServing pool = do
                      , getRandomSource       = rs
                      , getKeySetServer       = k
                      }
-    Warp.run 8080 $ app cfg
+    Warp.run port $ app cfg
 
 
 makePool :: String -> Int -> IO ConnectionPool
