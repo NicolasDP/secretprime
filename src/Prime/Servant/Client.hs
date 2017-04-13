@@ -18,7 +18,7 @@ module Prime.Servant.Client
     , getShare, getSharesWithMe
 
     , -- * lookup user details
-      sendPublicKey
+      sendPublicKey, getPrivateKeys
     , lookupUser
 
     , module X
@@ -38,7 +38,7 @@ import Prime.Servant.Models as X
   )
 import Prime.Servant.PrimeApi.Sharing as X
   ( NewShare(..)
-  , UserSecretShare(..)
+  , UserSecretShare(..), UserKeyPair(..), Entity(..)
   , ShareDetails(..), ShareParticipant(..)
   , UserPublicKey(..), PostPublicKey(..)
   )
@@ -47,7 +47,7 @@ import Servant.Client
 
 
 enroll :<|> loginStep1 :<|> loginStep2
-       :<|> sendPublicKey :<|> lookupUser
+       :<|> sendPublicKey :<|> getPrivateKeys :<|> lookupUser
        :<|> sendShare
        :<|> getSharesWithMe :<|> getShare
        = client primeApi

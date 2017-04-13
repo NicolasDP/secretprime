@@ -18,11 +18,14 @@ module Prime.Client.Monad
     , runPrimeClient
     , -- * helpers
       password
+    , newPassword
     , userInput
     , userInput'
     , userEmail
     , userName
     , userKeyPair
+    , openOrAskNewKeyPair
+    , writeKeyPair
     , runQueryM
     , login
 
@@ -158,43 +161,48 @@ userKeyPair = do
     case mkp of
         Nothing -> openOrAskNewKeyPair
         Just p  -> return p
+
+openOrAskNewKeyPair :: PrimeClientM KeyPair
+openOrAskNewKeyPair = do
+    pem <- gets getPEMFile
+    setCompletionMode CompleteFiles
+    p <- runHL $ askWhichKeyPair pem
+    kp <- openOrCreateNewPEM p
+    modify $ \s -> s { getKeyPair = Just kp }
+    return kp
   where
-    openOrAskNewKeyPair :: PrimeClientM KeyPair
-    openOrAskNewKeyPair = do
-        pem <- gets getPEMFile
-        p <- runHL $ askWhichKeyPair pem
-        kp <- openOrCreateNewPEM p
-        modify $ \s -> s { getKeyPair = Just kp }
-        return kp
-      where
-        askWhichKeyPair :: LString -> InputT IO LString
-        askWhichKeyPair defaultPem = do
-            mk <- H.getInputLine $ "pem file to use (default: " <> defaultPem <> ")"
-            return $ case mk of
-                Nothing            -> defaultPem
-                Just k | null k    -> defaultPem
-                       | otherwise -> k
-        openOrCreateNewPEM :: LString -> PrimeClientM KeyPair
-        openOrCreateNewPEM fp = do
-            -- 1. does file exist
-            b <- liftIO $ doesFileExist fp
-            case b of
-                -- 1.a. try parse the PEM
-                True -> do
-                    pwd <- password
-                    liftIO $ withKeyPair pwd fp return
-                -- 1.b. gen new and save it
-                False -> do
-                  pwd <- newPassword
-                  kp <- keyPairGenerate
-                  pks <- throwCryptoError <$> protect pwd (toPrivateKey kp)
-                  liftIO $ do
-                      B.appendFile fp $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
-                      B.appendFile fp $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
-                  return kp
+    askWhichKeyPair :: LString -> InputT IO LString
+    askWhichKeyPair defaultPem = do
+      mk <- H.getInputLine $ "pem file to use (default: " <> defaultPem <> ")"
+      return $ case mk of
+        Nothing            -> defaultPem
+        Just k | null k    -> defaultPem
+               | otherwise -> k
+    openOrCreateNewPEM :: LString -> PrimeClientM KeyPair
+    openOrCreateNewPEM fp = do
+      -- 1. does file exist
+      b <- liftIO $ doesFileExist fp
+      case b of
+        -- 1.a. try parse the PEM
+        True -> do
+          pwd <- password
+          liftIO $ withKeyPair pwd fp return
+        -- 1.b. gen new and save it
+        False -> do
+          kp <- keyPairGenerate
+          writeKeyPair kp fp
+          return kp
 
 withKeyPair :: Password -> LString -> (KeyPair -> IO a) -> IO a
 withKeyPair pwd fp f = withSecret pwd fp $ \sk -> withPublic fp $ \pk -> f (KeyPair sk pk)
+
+writeKeyPair :: KeyPair -> LString -> PrimeClientM ()
+writeKeyPair kp fp = do
+  pwd <- password
+  pks <- throwCryptoError <$> protect pwd (toPrivateKey kp)
+  liftIO $ do
+    B.appendFile fp $ pemWriteBS $ PEM defaultPEMKeySK [] $ convert pks
+    B.appendFile fp $ pemWriteBS $ PEM defaultPEMKeyPK [] $ convert (toPublicKey kp)
 
 withSecret :: Password -> LString -> (PrivateKey -> IO a) -> IO a
 withSecret pwd fp f = do

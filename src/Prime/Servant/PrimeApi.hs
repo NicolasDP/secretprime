@@ -34,8 +34,10 @@ type PrimeAPI = "user" :> "enroll" :> ReqBody '[JSON] EnrollRequest :> Post '[JS
   -- user identification
            :<|> "user" :> "login" :> Capture "user_email" LString :> Get '[JSON] UserIdentification
            :<|> "user" :> "login" :> Capture "user" Int64 :> ReqBody '[JSON] UserIdentificationChallenge :> Post '[JSON] (Cookied ())
-  -- get one user public keys
+  -- user's personal keys
            :<|> "user" :> AuthProtect "cookie-auth" :> ReqBody '[JSON] PostPublicKey :> Post '[JSON] ()
+           :<|> "user" :> AuthProtect "cookie-auth" :> Get '[JSON] [Entity UserKeyPair]
+  -- get one user public keys
            :<|> "user" :> AuthProtect "cookie-auth" :> Capture "user_email" LString :> Get '[JSON] [UserPublicKey]
   -- secret sharing
            :<|> "pvss" :> AuthProtect "cookie-auth" :> ReqBody '[JSON] NewShare :> Post '[JSON] ()
@@ -57,5 +59,6 @@ primeApi = Proxy
 
 primeServer :: ServerT PrimeAPI App
 primeServer = enrollUser :<|> loginUserStep1 :<|> loginUserStep2
-         :<|> postPublicKey :<|> listUserPublicKeys
+         :<|> postPublicKey :<|> retrievePrivateKeys
+         :<|> listUserPublicKeys
          :<|> postNewShare :<|> getSharesWithMe :<|> getShare

@@ -11,8 +11,9 @@
 module Prime.Servant.PrimeApi.Sharing
     ( UserPublicKey(..)
     , listUserPublicKeys
-    , PostPublicKey(..)
+    , PostPublicKey(..), UserKeyPair(..), Entity(..)
     , postPublicKey
+    , retrievePrivateKeys
     , NewShare(..), UserSecretShare(..)
     , postNewShare
     , ShareDetails(..), ShareParticipant(..)
@@ -59,6 +60,9 @@ postPublicKey wmid (PostPublicKey comment pk sk) = do
     let npk = UserKeyPair (toSqlKey $ wmData wmid) comment now pk sk
     _ <- runDB $ insert npk
     return ()
+
+retrievePrivateKeys :: WithMetadata Int64 -> App [Entity UserKeyPair]
+retrievePrivateKeys wmid = runDB $ selectList [UserKeyPairUser ==. (toSqlKey $ wmData wmid)] []
 
 -- Require user's public key --------------------------------------------------
 

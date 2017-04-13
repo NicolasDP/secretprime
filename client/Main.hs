@@ -59,7 +59,8 @@ defaultCompletionList =
   [ Completion "help" "help (print help message)"    False
   , Completion "quit" "quit (terminate the program)" False
   , Completion "enroll" "enroll (enroll user to the server)" False
-  , Completion "login" "login (loggin with the server)" False
+  , Completion "login" "login (login with the server)" False
+  , Completion "retrieve" "retrieve (retrieve public and private keys)" False
   , Completion "generate" "generate (create a new public key)" False
   , Completion "pvss-encrypt" "pvss-encrypt (create a new secret share and encrypt a document)" False
   , Completion "pvss-decrypt" "pvss-decrypt (use a secret share to decrypt a given ciphered file)" False
@@ -74,6 +75,7 @@ cli = do
       Just "quit" -> return ()
       Just "enroll" -> enrollNewUser >> cli
       Just "login"  -> login *> cli
+      Just "retrieve" -> login *> retrieveKP >> cli
       Just "generate" -> login *> generate >> cli
       Just "pvss-encrypt" -> login *> pvssEncrypt >> cli
       Just "pvss-decrypt" -> login *> pvssDecrypt >> cli
@@ -93,7 +95,7 @@ enrollNewUser :: PrimeClientM ()
 enrollNewUser = do
     name <- userName
     email <- userEmail
-    pwd <- password
+    pwd <- newPassword
 
     salt <- mkSalt
     let sk = throwCryptoError $ signingKeyFromPassword pwd salt
@@ -106,6 +108,22 @@ enrollNewUser = do
     runQueryM $ enroll er
 
     generate
+
+retrieveKP :: PrimeClientM ()
+retrieveKP = do
+  auth <- login
+  l <- runQueryM $ getPrivateKeys auth
+  forM_ l $ \(Entity _ ukp) -> do
+      say $ "Key: " <> maybe "<no description>" id (userKeyPairComment ukp)
+      setCompletionMode CompleteFiles
+      mf <- userInput "where to write the file (Ctrl-D to skip)> "
+      case mf of
+          Nothing -> return ()
+          Just f  -> do
+              pwd <- password
+              let k = throwCryptoError $ recover pwd (userKeyPairPrivate ukp)
+              let kp = KeyPair k (userKeyPairPublic ukp)
+              writeKeyPair kp f
 
 pvssEncrypt :: PrimeClientM ()
 pvssEncrypt = do
@@ -146,17 +164,26 @@ pvssDecrypt = do
     let s = throwCryptoError $ recoverSecret [ds]
     -- 3. decrypt files
     setCompletionMode CompleteFiles
-    f <- userInput "> "
-    case words <$> f of
-        Nothing -> say "nothing to decrypt ?"
-        Just l -> do
-          forM_ l $ \file -> do
-            let header = mempty :: ByteString
-            content <- convert <$> (liftIO $ B.readFile file)
-            let content' = throwCryptoError $ decrypt' s header content
-            liftIO $ B.writeFile (file <> ".decrypted") content'
-            say $ "file ciphered to " <> file <> ".decrypted"
+    pvssDecrypt' s
   where
+    pvssDecrypt' :: EncryptionKey -> PrimeClientM ()
+    pvssDecrypt' s = do
+      say "Decrypt file with the secret (or Ctrl-D to stop):"
+      f <- userInput "> "
+      case words <$> f of
+        Nothing -> return ()
+        Just [_] -> say "you must select the file to write the encrypted data to."
+                    >> pvssDecrypt' s
+        Just (x:y:[]) -> do
+            let header = mempty :: ByteString
+            content <- convert <$> (liftIO $ B.readFile x)
+            let content' = throwCryptoError $ decrypt' s header content
+            liftIO $ B.writeFile y content'
+            pvssDecrypt' s
+        Just _ ->  say "too many files..."
+                >> say " select 1 source file to Decrypt"
+                >> say " and 1 target file to write the decrypted data to."
+                >> pvssDecrypt' s
     selectShare :: PrimeClientM ShareDetails
     selectShare = do
       auth <- login
@@ -224,7 +251,7 @@ say = liftIO . putStrLn
 generate :: PrimeClientM ()
 generate = do
     auth <- login
-    ukp <- userKeyPair
+    ukp <- openOrAskNewKeyPair
     pwd <- password
 
     mcomment <- userInput "description: "
@@ -233,50 +260,3 @@ generate = do
     ppsk <- throwCryptoError <$> protect pwd (toPrivateKey ukp)
 
     runQueryM $ sendPublicKey auth (PostPublicKey mcomment (toPublicKey ukp) ppsk)
-{-
-doPVSS :: Integer -> [FilePath] -> IO ()
-doPVSS t l = do
-    -- 1. collect the public keys from the PEMs
-    pks <- foldM (\acc fp -> withPublic fp (return . flip (:) acc)) [] l
-
-    -- 2 generate shared secret
-    (s, commitments, ps) <- generateSecret t pks
-
-    unless (fromIntegral t == length commitments) $
-        error "there should be as many commitments as threshold"
-    -- 3 verify the shares
-    unless (and $ verifyShare commitments <$> ps) $
-        error "one of the share is not valid"
-
-    -- 4. TODO output the shares
-    forM_ ps print
-
-makeTest = do
-    putStrLn "let's generate a secret..."
-
-    -- 1 generate users
-    user1 <- keyPairGenerate
-    user2 <- keyPairGenerate
-
-    let users = [user1, user2]
-
-    -- 2 generate shared secret
-    (s, commitments, ps) <- generateSecret 1 $ toPublicKey <$> users
-
-    -- 3 verify the shares
-    unless (and $ verifyShare commitments <$> ps) $
-        error "one of the share is not valid"
-
-    -- 4 cipher a message
-    let msg_plain = "This is a ciphered message..." :: ByteString
-    let header = mempty :: ByteString
-    msg_ciphered <- throwCryptoError <$> encrypt' s header msg_plain
-
-    -- 5 decipher message
-    msg_deciphered <- throwCryptoErrorIO $ decrypt' s header msg_ciphered
-    unless (msg_plain == msg_deciphered) $
-        error "ciphered message not longer the same..."
-
-    print msg_plain
-    print msg_deciphered
--}
