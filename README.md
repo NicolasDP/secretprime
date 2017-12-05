@@ -1,3 +1,3 @@
 # Secret sharing made simpler
 
-WIP, more coming soon
+The project has been moved under the special care of Prime Type Ltd. See [ShareSafe](https://github.com/primetype/sharesafe-lib).
